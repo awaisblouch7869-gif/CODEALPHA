@@ -1,0 +1,311 @@
+import java.util.ArrayList;
+import java.util.Scanner;
+
+/**
+ * Student Grade Tracker
+ * -----------------------
+ * Console-based Java program to input and manage student grades.
+ * Stores data using an ArrayList of Student objects, calculates
+ * average / highest / lowest scores, and displays a summary report.
+ */
+public class studentgradetracker {
+
+    // ---------- Inner class representing a Student ----------
+    static class Student {
+        private String name;
+        private ArrayList<Double> grades;
+
+        public Student(String name) {
+            this.name = name;
+            this.grades = new ArrayList<>();
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public ArrayList<Double> getGrades() {
+            return grades;
+        }
+
+        public void addGrade(double grade) {
+            grades.add(grade);
+        }
+
+        public double getAverage() {
+            if (grades.isEmpty()) return 0.0;
+            double sum = 0;
+            for (double g : grades) sum += g;
+            return sum / grades.size();
+        }
+
+        public double getHighest() {
+            if (grades.isEmpty()) return 0.0;
+            double max = grades.get(0);
+            for (double g : grades) if (g > max) max = g;
+            return max;
+        }
+
+        public double getLowest() {
+            if (grades.isEmpty()) return 0.0;
+            double min = grades.get(0);
+            for (double g : grades) if (g < min) min = g;
+            return min;
+        }
+
+        public String getLetterGrade() {
+            double avg = getAverage();
+            if (avg >= 90) return "A";
+            if (avg >= 80) return "B";
+            if (avg >= 70) return "C";
+            if (avg >= 60) return "D";
+            return "F";
+        }
+    }
+
+    // ---------- Main program ----------
+    private static ArrayList<Student> students = new ArrayList<>();
+    private static Scanner scanner = new Scanner(System.in);
+
+    public static void main(String[] args) {
+        boolean running = true;
+
+        System.out.println("=================================");
+        System.out.println("     STUDENT GRADE TRACKER");
+        System.out.println("=================================");
+
+        while (running) {
+            printMenu();
+            int choice = readInt("Enter your choice: ");
+
+            switch (choice) {
+                case 1:
+                    addStudent();
+                    break;
+                case 2:
+                    addGradeToStudent();
+                    break;
+                case 3:
+                    viewStudentReport();
+                    break;
+                case 4:
+                    displaySummaryReport();
+                    break;
+                case 5:
+                    removeStudent();
+                    break;
+                case 6:
+                    running = false;
+                    System.out.println("Goodbye!");
+                    break;
+                default:
+                    System.out.println("Invalid choice. Please try again.\n");
+            }
+        }
+        scanner.close();
+    }
+
+    private static void printMenu() {
+        System.out.println("\n--------- MENU ---------");
+        System.out.println("1. Add New Student");
+        System.out.println("2. Add Grade to Student");
+        System.out.println("3. View Individual Student Report");
+        System.out.println("4. Display Summary Report (All Students)");
+        System.out.println("5. Remove Student");
+        System.out.println("6. Exit");
+        System.out.println("-------------------------");
+    }
+
+    // ---------- Option 1: Add a new student ----------
+    private static void addStudent() {
+        System.out.print("Enter student name: ");
+        String name = scanner.nextLine().trim();
+
+        if (name.isEmpty()) {
+            System.out.println("Name cannot be empty.\n");
+            return;
+        }
+        if (findStudent(name) != null) {
+            System.out.println("A student with that name already exists.\n");
+            return;
+        }
+
+        Student student = new Student(name);
+
+        int numGrades = readInt("How many grades to enter now? (0 to skip): ");
+        for (int i = 0; i < numGrades; i++) {
+            double grade = readDouble("  Enter grade #" + (i + 1) + " (0-100): ");
+            student.addGrade(grade);
+        }
+
+        students.add(student);
+        System.out.println("Student \"" + name + "\" added successfully.\n");
+    }
+
+    // ---------- Option 2: Add a grade to an existing student ----------
+    private static void addGradeToStudent() {
+        if (students.isEmpty()) {
+            System.out.println("No students available. Please add a student first.\n");
+            return;
+        }
+
+        System.out.print("Enter student name: ");
+        String name = scanner.nextLine().trim();
+        Student student = findStudent(name);
+
+        if (student == null) {
+            System.out.println("Student not found.\n");
+            return;
+        }
+
+        double grade = readDouble("Enter grade to add (0-100): ");
+        student.addGrade(grade);
+        System.out.println("Grade added to " + student.getName() + ".\n");
+    }
+
+    // ---------- Option 3: View a single student's report ----------
+    private static void viewStudentReport() {
+        if (students.isEmpty()) {
+            System.out.println("No students available.\n");
+            return;
+        }
+
+        System.out.print("Enter student name: ");
+        String name = scanner.nextLine().trim();
+        Student student = findStudent(name);
+
+        if (student == null) {
+            System.out.println("Student not found.\n");
+            return;
+        }
+
+        System.out.println("\n--- Report for " + student.getName() + " ---");
+        System.out.println("Grades: " + student.getGrades());
+        if (student.getGrades().isEmpty()) {
+            System.out.println("No grades recorded yet.");
+        } else {
+            System.out.printf("Average: %.2f%n", student.getAverage());
+            System.out.printf("Highest: %.2f%n", student.getHighest());
+            System.out.printf("Lowest : %.2f%n", student.getLowest());
+            System.out.println("Letter Grade: " + student.getLetterGrade());
+        }
+        System.out.println();
+    }
+
+    // ---------- Option 4: Summary report for all students ----------
+    private static void displaySummaryReport() {
+        if (students.isEmpty()) {
+            System.out.println("No students available.\n");
+            return;
+        }
+
+        System.out.println("\n=====================================================================");
+        System.out.printf("%-15s %-10s %-10s %-10s %-8s %-10s%n",
+                "Name", "Average", "Highest", "Lowest", "Letter", "# Grades");
+        System.out.println("---------------------------------------------------------------------");
+
+        double classTotal = 0;
+        int studentsWithGrades = 0;
+        double classHighest = Double.MIN_VALUE;
+        double classLowest = Double.MAX_VALUE;
+        String topStudent = "";
+        String bottomStudent = "";
+
+        for (Student s : students) {
+            String avgStr = s.getGrades().isEmpty() ? "N/A" : String.format("%.2f", s.getAverage());
+            String highStr = s.getGrades().isEmpty() ? "N/A" : String.format("%.2f", s.getHighest());
+            String lowStr = s.getGrades().isEmpty() ? "N/A" : String.format("%.2f", s.getLowest());
+            String letter = s.getGrades().isEmpty() ? "-" : s.getLetterGrade();
+
+            System.out.printf("%-15s %-10s %-10s %-10s %-8s %-10d%n",
+                    s.getName(), avgStr, highStr, lowStr, letter, s.getGrades().size());
+
+            if (!s.getGrades().isEmpty()) {
+                classTotal += s.getAverage();
+                studentsWithGrades++;
+
+                if (s.getAverage() > classHighest) {
+                    classHighest = s.getAverage();
+                    topStudent = s.getName();
+                }
+                if (s.getAverage() < classLowest) {
+                    classLowest = s.getAverage();
+                    bottomStudent = s.getName();
+                }
+            }
+        }
+
+        System.out.println("=====================================================================");
+
+        if (studentsWithGrades > 0) {
+            double classAverage = classTotal / studentsWithGrades;
+            System.out.printf("Class Average (of student averages): %.2f%n", classAverage);
+            System.out.printf("Top Performer   : %s (%.2f)%n", topStudent, classHighest);
+            System.out.printf("Lowest Performer: %s (%.2f)%n", bottomStudent, classLowest);
+        } else {
+            System.out.println("No grades have been recorded yet for any student.");
+        }
+        System.out.println("Total Students: " + students.size());
+        System.out.println();
+    }
+
+    // ---------- Option 5: Remove a student ----------
+    private static void removeStudent() {
+        if (students.isEmpty()) {
+            System.out.println("No students available.\n");
+            return;
+        }
+
+        System.out.print("Enter student name to remove: ");
+        String name = scanner.nextLine().trim();
+        Student student = findStudent(name);
+
+        if (student == null) {
+            System.out.println("Student not found.\n");
+            return;
+        }
+
+        students.remove(student);
+        System.out.println("Student \"" + name + "\" removed.\n");
+    }
+
+    // ---------- Helper: find a student by name (case-insensitive) ----------
+    private static Student findStudent(String name) {
+        for (Student s : students) {
+            if (s.getName().equalsIgnoreCase(name)) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    // ---------- Helper: safely read an integer ----------
+    private static int readInt(String prompt) {
+        while (true) {
+            try {
+                System.out.print(prompt);
+                int value = Integer.parseInt(scanner.nextLine().trim());
+                return value;
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input. Please enter a whole number.");
+            }
+        }
+    }
+
+    // ---------- Helper: safely read a double within 0-100 ----------
+    private static double readDouble(String prompt) {
+        while (true) {
+            try {
+                System.out.print(prompt);
+                double value = Double.parseDouble(scanner.nextLine().trim());
+                if (value < 0 || value > 100) {
+                    System.out.println("Please enter a value between 0 and 100.");
+                    continue;
+                }
+                return value;
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input. Please enter a numeric value.");
+            }
+        }
+    }
+}
