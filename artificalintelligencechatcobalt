@@ -1,0 +1,614 @@
+import java.io.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+
+/**
+ * Hotel Reservation System
+ * --------------------------
+ * Console-based hotel booking simulator built with OOP principles.
+ *
+ * Core classes:
+ *   RoomCategory      - enum: STANDARD, DELUXE, SUITE (each with a base nightly rate)
+ *   Room              - a physical room with number, category, and maintenance flag
+ *   Guest             - a customer making a reservation
+ *   Reservation       - a booking record (room, guest, dates, cost, status, payment)
+ *   PaymentSimulator  - simulates processing a card payment
+ *   Hotel             - manages rooms & reservations: search, book, cancel, view
+ *
+ * Persistence: all rooms and reservations are saved to / loaded from a
+ * plain-text file (hotel_data.txt) via File I/O, so bookings survive
+ * between runs.
+ */
+public class hotelreservationsystem {
+
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter DATETIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    // ==================================================================
+    //  ROOM CATEGORY
+    // ==================================================================
+    enum RoomCategory {
+        STANDARD(89.00),
+        DELUXE(149.00),
+        SUITE(279.00);
+
+        private final double baseRate;
+        RoomCategory(double baseRate) { this.baseRate = baseRate; }
+        public double getBaseRate() { return baseRate; }
+    }
+
+    // ==================================================================
+    //  ROOM
+    // ==================================================================
+    static class Room {
+        private final int roomNumber;
+        private final RoomCategory category;
+        private boolean underMaintenance;
+
+        public Room(int roomNumber, RoomCategory category) {
+            this.roomNumber = roomNumber;
+            this.category = category;
+            this.underMaintenance = false;
+        }
+
+        public int getRoomNumber() { return roomNumber; }
+        public RoomCategory getCategory() { return category; }
+        public boolean isUnderMaintenance() { return underMaintenance; }
+        public void setUnderMaintenance(boolean value) { underMaintenance = value; }
+        public double getPricePerNight() { return category.getBaseRate(); }
+    }
+
+    // ==================================================================
+    //  GUEST
+    // ==================================================================
+    static class Guest {
+        private final String name;
+        private final String email;
+        private final String phone;
+
+        public Guest(String name, String email, String phone) {
+            this.name = name;
+            this.email = email;
+            this.phone = phone;
+        }
+
+        public String getName() { return name; }
+        public String getEmail() { return email; }
+        public String getPhone() { return phone; }
+    }
+
+    // ==================================================================
+    //  RESERVATION
+    // ==================================================================
+    enum ReservationStatus { CONFIRMED, CANCELLED, COMPLETED }
+    enum PaymentStatus { PENDING, PAID, REFUNDED }
+
+    static class Reservation {
+        private final int id;
+        private final Room room;
+        private final Guest guest;
+        private final LocalDate checkIn;
+        private final LocalDate checkOut;
+        private final double totalCost;
+        private ReservationStatus status;
+        private PaymentStatus paymentStatus;
+        private final LocalDateTime bookedAt;
+        private String paymentTransactionId;
+
+        public Reservation(int id, Room room, Guest guest, LocalDate checkIn, LocalDate checkOut,
+                           double totalCost, LocalDateTime bookedAt) {
+            this.id = id;
+            this.room = room;
+            this.guest = guest;
+            this.checkIn = checkIn;
+            this.checkOut = checkOut;
+            this.totalCost = totalCost;
+            this.status = ReservationStatus.CONFIRMED;
+            this.paymentStatus = PaymentStatus.PENDING;
+            this.bookedAt = bookedAt;
+            this.paymentTransactionId = "N/A";
+        }
+
+        public int getId() { return id; }
+        public Room getRoom() { return room; }
+        public Guest getGuest() { return guest; }
+        public LocalDate getCheckIn() { return checkIn; }
+        public LocalDate getCheckOut() { return checkOut; }
+        public double getTotalCost() { return totalCost; }
+        public ReservationStatus getStatus() { return status; }
+        public void setStatus(ReservationStatus status) { this.status = status; }
+        public PaymentStatus getPaymentStatus() { return paymentStatus; }
+        public void setPaymentStatus(PaymentStatus paymentStatus) { this.paymentStatus = paymentStatus; }
+        public String getPaymentTransactionId() { return paymentTransactionId; }
+        public void setPaymentTransactionId(String id) { this.paymentTransactionId = id; }
+        public LocalDateTime getBookedAt() { return bookedAt; }
+
+        public long getNumberOfNights() {
+            return ChronoUnit.DAYS.between(checkIn, checkOut);
+        }
+
+        public void printDetails() {
+            System.out.println("\n----------------- BOOKING DETAILS -----------------");
+            System.out.println("Reservation ID : " + id);
+            System.out.println("Guest Name     : " + guest.getName());
+            System.out.println("Guest Email    : " + guest.getEmail());
+            System.out.println("Guest Phone    : " + guest.getPhone());
+            System.out.println("Room Number    : " + room.getRoomNumber() + " (" + room.getCategory() + ")");
+            System.out.printf("Rate/Night     : $%.2f%n", room.getPricePerNight());
+            System.out.println("Check-In       : " + checkIn.format(DATE_FMT));
+            System.out.println("Check-Out      : " + checkOut.format(DATE_FMT));
+            System.out.println("Nights         : " + getNumberOfNights());
+            System.out.printf("Total Cost     : $%.2f%n", totalCost);
+            System.out.println("Status         : " + status);
+            System.out.println("Payment Status : " + paymentStatus);
+            System.out.println("Transaction ID : " + paymentTransactionId);
+            System.out.println("Booked At      : " + bookedAt.format(DATETIME_FMT));
+            System.out.println("-----------------------------------------------------\n");
+        }
+
+        public String toSummaryLine() {
+            return String.format("#%-4d %-18s Room %-4d (%-8s) %s -> %s  $%-9.2f %-10s %-8s",
+                    id, guest.getName(), room.getRoomNumber(), room.getCategory(),
+                    checkIn.format(DATE_FMT), checkOut.format(DATE_FMT), totalCost, status, paymentStatus);
+        }
+    }
+
+    // ==================================================================
+    //  PAYMENT SIMULATOR
+    // ==================================================================
+    static class PaymentSimulator {
+        private static final Random rng = new Random();
+
+        /**
+         * Simulates processing a card payment.
+         * Basic validation: card number must be 13-19 digits.
+         * ~95% chance of approval to mimic real-world declines.
+         */
+        public static PaymentResult processPayment(String cardNumber, double amount) {
+            String digitsOnly = cardNumber.replaceAll("[^0-9]", "");
+            if (digitsOnly.length() < 13 || digitsOnly.length() > 19) {
+                return new PaymentResult(false, "Invalid card number format.", null);
+            }
+            if (amount <= 0) {
+                return new PaymentResult(false, "Invalid payment amount.", null);
+            }
+
+            boolean approved = rng.nextDouble() < 0.95;
+            if (approved) {
+                String txnId = "TXN-" + System.currentTimeMillis() + "-" + (100 + rng.nextInt(900));
+                return new PaymentResult(true, "Payment approved.", txnId);
+            } else {
+                return new PaymentResult(false, "Payment declined by issuing bank.", null);
+            }
+        }
+
+        static class PaymentResult {
+            final boolean success;
+            final String message;
+            final String transactionId;
+
+            PaymentResult(boolean success, String message, String transactionId) {
+                this.success = success;
+                this.message = message;
+                this.transactionId = transactionId;
+            }
+        }
+    }
+
+    // ==================================================================
+    //  HOTEL (manages rooms & reservations)
+    // ==================================================================
+    static class Hotel {
+        private final List<Room> rooms = new ArrayList<>();
+        private final List<Reservation> reservations = new ArrayList<>();
+        private int nextReservationId = 1;
+
+        public void addRoom(Room room) { rooms.add(room); }
+        public List<Room> getAllRooms() { return rooms; }
+        public List<Reservation> getAllReservations() { return reservations; }
+
+        public Room findRoom(int roomNumber) {
+            for (Room r : rooms) {
+                if (r.getRoomNumber() == roomNumber) return r;
+            }
+            return null;
+        }
+
+        public Reservation findReservation(int id) {
+            for (Reservation r : reservations) {
+                if (r.getId() == id) return r;
+            }
+            return null;
+        }
+
+        /** Returns true if the room has no overlapping CONFIRMED reservation in the given date range. */
+        public boolean isRoomAvailable(Room room, LocalDate checkIn, LocalDate checkOut) {
+            if (room.isUnderMaintenance()) return false;
+            for (Reservation res : reservations) {
+                if (res.getRoom().getRoomNumber() != room.getRoomNumber()) continue;
+                if (res.getStatus() != ReservationStatus.CONFIRMED) continue;
+                boolean overlaps = checkIn.isBefore(res.getCheckOut()) && res.getCheckIn().isBefore(checkOut);
+                if (overlaps) return false;
+            }
+            return true;
+        }
+
+        public List<Room> searchAvailableRooms(RoomCategory category, LocalDate checkIn, LocalDate checkOut) {
+            List<Room> available = new ArrayList<>();
+            for (Room r : rooms) {
+                if (category != null && r.getCategory() != category) continue;
+                if (isRoomAvailable(r, checkIn, checkOut)) available.add(r);
+            }
+            return available;
+        }
+
+        public Reservation bookRoom(Room room, Guest guest, LocalDate checkIn, LocalDate checkOut) {
+            long nights = ChronoUnit.DAYS.between(checkIn, checkOut);
+            double totalCost = nights * room.getPricePerNight();
+            Reservation res = new Reservation(nextReservationId++, room, guest, checkIn, checkOut, totalCost, LocalDateTime.now());
+            reservations.add(res);
+            return res;
+        }
+
+        public boolean cancelReservation(int id) {
+            Reservation res = findReservation(id);
+            if (res == null || res.getStatus() == ReservationStatus.CANCELLED) return false;
+
+            res.setStatus(ReservationStatus.CANCELLED);
+            if (res.getPaymentStatus() == PaymentStatus.PAID) {
+                res.setPaymentStatus(PaymentStatus.REFUNDED);
+            }
+            return true;
+        }
+    }
+
+    // ==================================================================
+    //  MAIN APPLICATION
+    // ==================================================================
+    private static final String SAVE_FILE = "hotel_data.txt";
+    private static Hotel hotel = new Hotel();
+    private static Scanner scanner = new Scanner(System.in);
+
+    public static void main(String[] args) {
+        System.out.println("===================================================");
+        System.out.println("           HOTEL RESERVATION SYSTEM");
+        System.out.println("===================================================");
+
+        seedRooms();
+
+        boolean running = true;
+        while (running) {
+            printMenu();
+            int choice = readInt("Enter your choice: ");
+
+            switch (choice) {
+                case 1: searchRooms(); break;
+                case 2: bookRoom(); break;
+                case 3: cancelReservation(); break;
+                case 4: viewBookingDetails(); break;
+                case 5: viewAllReservations(); break;
+                case 6: viewRoomAvailability(); break;
+                case 7: saveData(); break;
+                case 8: loadData(); break;
+                case 9:
+                    running = false;
+                    System.out.println("Thank you for using the Hotel Reservation System. Goodbye!");
+                    break;
+                default:
+                    System.out.println("Invalid choice. Please try again.\n");
+            }
+        }
+        scanner.close();
+    }
+
+    private static void seedRooms() {
+        int roomNum = 101;
+        for (int i = 0; i < 5; i++) hotel.addRoom(new Room(roomNum++, RoomCategory.STANDARD));
+        roomNum = 201;
+        for (int i = 0; i < 4; i++) hotel.addRoom(new Room(roomNum++, RoomCategory.DELUXE));
+        roomNum = 301;
+        for (int i = 0; i < 3; i++) hotel.addRoom(new Room(roomNum++, RoomCategory.SUITE));
+    }
+
+    private static void printMenu() {
+        System.out.println("\n----------------- MENU -----------------");
+        System.out.println("1. Search Available Rooms");
+        System.out.println("2. Book a Room");
+        System.out.println("3. Cancel Reservation");
+        System.out.println("4. View Booking Details");
+        System.out.println("5. View All Reservations");
+        System.out.println("6. View Room Availability (All Rooms)");
+        System.out.println("7. Save Data to File");
+        System.out.println("8. Load Data from File");
+        System.out.println("9. Exit");
+        System.out.println("-----------------------------------------");
+    }
+
+    // ---------- Search ----------
+    private static void searchRooms() {
+        LocalDate checkIn = readDate("Enter check-in date (yyyy-MM-dd): ");
+        LocalDate checkOut = readDate("Enter check-out date (yyyy-MM-dd): ");
+        if (checkOut == null || checkIn == null || !checkOut.isAfter(checkIn)) {
+            System.out.println("Check-out date must be after check-in date.\n");
+            return;
+        }
+
+        RoomCategory category = readCategoryOptional();
+
+        List<Room> available = hotel.searchAvailableRooms(category, checkIn, checkOut);
+        if (available.isEmpty()) {
+            System.out.println("No rooms available for the selected criteria.\n");
+            return;
+        }
+
+        System.out.println("\n----------- AVAILABLE ROOMS -----------");
+        System.out.printf("%-8s %-10s %-12s%n", "Room#", "Category", "Rate/Night");
+        for (Room r : available) {
+            System.out.printf("%-8d %-10s $%-11.2f%n", r.getRoomNumber(), r.getCategory(), r.getPricePerNight());
+        }
+        System.out.println("-----------------------------------------\n");
+    }
+
+    // ---------- Book ----------
+    private static void bookRoom() {
+        LocalDate checkIn = readDate("Enter check-in date (yyyy-MM-dd): ");
+        LocalDate checkOut = readDate("Enter check-out date (yyyy-MM-dd): ");
+        if (checkIn == null || checkOut == null || !checkOut.isAfter(checkIn)) {
+            System.out.println("Check-out date must be after check-in date.\n");
+            return;
+        }
+
+        int roomNumber = readInt("Enter room number to book: ");
+        Room room = hotel.findRoom(roomNumber);
+        if (room == null) {
+            System.out.println("Room not found.\n");
+            return;
+        }
+        if (!hotel.isRoomAvailable(room, checkIn, checkOut)) {
+            System.out.println("Room is not available for the selected dates.\n");
+            return;
+        }
+
+        System.out.print("Enter guest name: ");
+        String name = scanner.nextLine().trim();
+        System.out.print("Enter guest email: ");
+        String email = scanner.nextLine().trim();
+        System.out.print("Enter guest phone: ");
+        String phone = scanner.nextLine().trim();
+        Guest guest = new Guest(name, email, phone);
+
+        Reservation res = hotel.bookRoom(room, guest, checkIn, checkOut);
+        System.out.printf("Reservation #%d created. Total cost: $%.2f for %d night(s).%n",
+                res.getId(), res.getTotalCost(), res.getNumberOfNights());
+
+        System.out.print("Proceed to payment now? (y/n): ");
+        String proceed = scanner.nextLine().trim().toLowerCase();
+        if (proceed.equals("y")) {
+            processPaymentForReservation(res);
+        } else {
+            System.out.println("Reservation saved with PENDING payment. You can pay later.\n");
+        }
+    }
+
+    private static void processPaymentForReservation(Reservation res) {
+        System.out.print("Enter card number: ");
+        String cardNumber = scanner.nextLine().trim();
+
+        PaymentSimulator.PaymentResult result = PaymentSimulator.processPayment(cardNumber, res.getTotalCost());
+        System.out.println(result.message);
+
+        if (result.success) {
+            res.setPaymentStatus(PaymentStatus.PAID);
+            res.setPaymentTransactionId(result.transactionId);
+            System.out.println("Payment successful. Transaction ID: " + result.transactionId + "\n");
+        } else {
+            System.out.println("Payment failed. Reservation remains PENDING; you may try again later.\n");
+        }
+    }
+
+    // ---------- Cancel ----------
+    private static void cancelReservation() {
+        int id = readInt("Enter reservation ID to cancel: ");
+        Reservation res = hotel.findReservation(id);
+        if (res == null) {
+            System.out.println("Reservation not found.\n");
+            return;
+        }
+        if (res.getStatus() == ReservationStatus.CANCELLED) {
+            System.out.println("Reservation is already cancelled.\n");
+            return;
+        }
+
+        boolean cancelled = hotel.cancelReservation(id);
+        if (cancelled) {
+            System.out.println("Reservation #" + id + " has been cancelled.");
+            if (res.getPaymentStatus() == PaymentStatus.REFUNDED) {
+                System.out.printf("Refund of $%.2f has been simulated.%n", res.getTotalCost());
+            }
+            System.out.println();
+        }
+    }
+
+    // ---------- View booking details ----------
+    private static void viewBookingDetails() {
+        int id = readInt("Enter reservation ID: ");
+        Reservation res = hotel.findReservation(id);
+        if (res == null) {
+            System.out.println("Reservation not found.\n");
+            return;
+        }
+        res.printDetails();
+
+        if (res.getPaymentStatus() == PaymentStatus.PENDING && res.getStatus() == ReservationStatus.CONFIRMED) {
+            System.out.print("This reservation has a pending payment. Pay now? (y/n): ");
+            String proceed = scanner.nextLine().trim().toLowerCase();
+            if (proceed.equals("y")) {
+                processPaymentForReservation(res);
+            }
+        }
+    }
+
+    // ---------- View all reservations ----------
+    private static void viewAllReservations() {
+        List<Reservation> all = hotel.getAllReservations();
+        if (all.isEmpty()) {
+            System.out.println("No reservations on file.\n");
+            return;
+        }
+
+        System.out.println("\n--------------------------------- ALL RESERVATIONS ---------------------------------");
+        for (Reservation r : all) {
+            System.out.println(r.toSummaryLine());
+        }
+        System.out.println("---------------------------------------------------------------------------------------\n");
+    }
+
+    // ---------- View room availability ----------
+    private static void viewRoomAvailability() {
+        LocalDate today = LocalDate.now();
+        LocalDate tomorrow = today.plusDays(1);
+
+        System.out.println("\n--------- ROOM STATUS (availability shown for today -> tomorrow) ---------");
+        System.out.printf("%-8s %-10s %-12s %-15s%n", "Room#", "Category", "Rate/Night", "Status");
+        for (Room r : hotel.getAllRooms()) {
+            String status;
+            if (r.isUnderMaintenance()) {
+                status = "MAINTENANCE";
+            } else if (hotel.isRoomAvailable(r, today, tomorrow)) {
+                status = "AVAILABLE";
+            } else {
+                status = "BOOKED";
+            }
+            System.out.printf("%-8d %-10s $%-11.2f %-15s%n", r.getRoomNumber(), r.getCategory(), r.getPricePerNight(), status);
+        }
+        System.out.println("-----------------------------------------------------------------------------\n");
+    }
+
+    // ---------- File I/O: Save ----------
+    private static void saveData() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(SAVE_FILE))) {
+            for (Room r : hotel.getAllRooms()) {
+                writer.write("ROOM|" + r.getRoomNumber() + "|" + r.getCategory() + "|" + r.isUnderMaintenance());
+                writer.newLine();
+            }
+            for (Reservation res : hotel.getAllReservations()) {
+                writer.write(String.join("|",
+                        "RESERVATION",
+                        String.valueOf(res.getId()),
+                        String.valueOf(res.getRoom().getRoomNumber()),
+                        res.getGuest().getName(),
+                        res.getGuest().getEmail(),
+                        res.getGuest().getPhone(),
+                        res.getCheckIn().format(DATE_FMT),
+                        res.getCheckOut().format(DATE_FMT),
+                        String.valueOf(res.getTotalCost()),
+                        res.getStatus().toString(),
+                        res.getPaymentStatus().toString(),
+                        res.getPaymentTransactionId(),
+                        res.getBookedAt().format(DATETIME_FMT)
+                ));
+                writer.newLine();
+            }
+            System.out.println("Hotel data saved to \"" + SAVE_FILE + "\".\n");
+        } catch (IOException e) {
+            System.out.println("Error saving data: " + e.getMessage() + "\n");
+        }
+    }
+
+    // ---------- File I/O: Load ----------
+    private static void loadData() {
+        File file = new File(SAVE_FILE);
+        if (!file.exists()) {
+            System.out.println("No saved data file found (\"" + SAVE_FILE + "\").\n");
+            return;
+        }
+
+        Hotel loadedHotel = new Hotel();
+        int maxId = 0;
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("\\|", -1);
+
+                if (parts[0].equals("ROOM")) {
+                    int roomNumber = Integer.parseInt(parts[1]);
+                    RoomCategory category = RoomCategory.valueOf(parts[2]);
+                    boolean maintenance = Boolean.parseBoolean(parts[3]);
+                    Room room = new Room(roomNumber, category);
+                    room.setUnderMaintenance(maintenance);
+                    loadedHotel.addRoom(room);
+                } else if (parts[0].equals("RESERVATION")) {
+                    int id = Integer.parseInt(parts[1]);
+                    int roomNumber = Integer.parseInt(parts[2]);
+                    String name = parts[3];
+                    String email = parts[4];
+                    String phone = parts[5];
+                    LocalDate checkIn = LocalDate.parse(parts[6], DATE_FMT);
+                    LocalDate checkOut = LocalDate.parse(parts[7], DATE_FMT);
+                    double totalCost = Double.parseDouble(parts[8]);
+                    ReservationStatus status = ReservationStatus.valueOf(parts[9]);
+                    PaymentStatus paymentStatus = PaymentStatus.valueOf(parts[10]);
+                    String txnId = parts[11];
+                    LocalDateTime bookedAt = LocalDateTime.parse(parts[12], DATETIME_FMT);
+
+                    Room room = loadedHotel.findRoom(roomNumber);
+                    if (room == null) continue; // skip orphaned reservation
+                    Guest guest = new Guest(name, email, phone);
+
+                    Reservation res = new Reservation(id, room, guest, checkIn, checkOut, totalCost, bookedAt);
+                    res.setStatus(status);
+                    res.setPaymentStatus(paymentStatus);
+                    res.setPaymentTransactionId(txnId);
+                    loadedHotel.getAllReservations().add(res);
+                    maxId = Math.max(maxId, id);
+                }
+            }
+
+            loadedHotel.nextReservationId = maxId + 1;
+            hotel = loadedHotel;
+            System.out.println("Hotel data loaded successfully from \"" + SAVE_FILE + "\".\n");
+        } catch (Exception e) {
+            System.out.println("Error loading data: " + e.getMessage() + "\n");
+        }
+    }
+
+    // ---------- Input helpers ----------
+    private static int readInt(String prompt) {
+        while (true) {
+            try {
+                System.out.print(prompt);
+                return Integer.parseInt(scanner.nextLine().trim());
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input. Please enter a whole number.");
+            }
+        }
+    }
+
+    private static LocalDate readDate(String prompt) {
+        while (true) {
+            try {
+                System.out.print(prompt);
+                String input = scanner.nextLine().trim();
+                return LocalDate.parse(input, DATE_FMT);
+            } catch (Exception e) {
+                System.out.println("Invalid date format. Please use yyyy-MM-dd.");
+            }
+        }
+    }
+
+    private static RoomCategory readCategoryOptional() {
+        System.out.println("Filter by category? 1=Standard 2=Deluxe 3=Suite 0=Any");
+        int choice = readInt("Enter choice: ");
+        switch (choice) {
+            case 1: return RoomCategory.STANDARD;
+            case 2: return RoomCategory.DELUXE;
+            case 3: return RoomCategory.SUITE;
+            default: return null;
+        }
+    }
+}
